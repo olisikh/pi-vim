@@ -326,10 +326,10 @@ export class ModalEditor extends CustomEditor {
   private quitFn: () => void = () => {};
   private notifyFn: (message: string) => void = () => {};
   private modeChangeFn: (mode: Mode, prevMode: Mode) => void = () => {};
-  // Injectable abort hook: when set, Normal-mode Esc routes through it
-  // instead of the hardcoded `super.handleInput`, so a host extension can
-  // guard the abort (e.g. require a double-Esc) without subclassing.
-  private abortFn: ((data: string) => void) | null = null;
+  // Injectable abort guard: when set, Normal-mode Esc asks it whether to
+  // proceed with the abort, so a host extension can require a double-Esc
+  // without subclassing or re-implementing the abort trigger.
+  private abortGuard: (() => boolean) | null = null;
   private exCommandSettings: ExCommandSettings = DEFAULT_EX_COMMAND_SETTINGS;
   private commandNamesFn: () => ReadonlySet<string> = () =>
     EX_BUILTIN_COMMAND_NAMES;
@@ -395,8 +395,8 @@ export class ModalEditor extends CustomEditor {
   setModeChangeFn(fn: (mode: Mode, prevMode: Mode) => void): void {
     this.modeChangeFn = fn;
   }
-  setAbortFn(fn: ((data: string) => void) | null): void {
-    this.abortFn = fn;
+  setAbortGuard(fn: (() => boolean) | null): void {
+    this.abortGuard = fn;
   }
   setRunCommandFn(fn: (commandLine: string) => CommandDispatchResult): void {
     this.runCommandFn = fn;
@@ -1496,11 +1496,9 @@ export class ModalEditor extends CustomEditor {
       this.setMode("normal");
       if (this.getCursor().col > 0) this.moveCursorBy(-1);
     } else {
-      // pass escape to abort agent; injectable so a host can guard the abort
-      // (e.g. require a double-Esc) without subclassing ModalEditor.
-      if (this.abortFn) {
-        this.abortFn("\x1b");
-      } else {
+      // pass escape to abort agent; a host can guard the abort (e.g. require
+      // a double-Esc) by returning false from setAbortGuard to suppress it.
+      if (this.abortGuard ? this.abortGuard() : true) {
         super.handleInput("\x1b");
       }
     }
