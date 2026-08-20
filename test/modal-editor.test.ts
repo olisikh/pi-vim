@@ -13,7 +13,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { CURSOR_MARKER, visibleWidth } from "@earendil-works/pi-tui";
-import installPiVim, {
+import {
+  createPiVimEditorFactory,
   ModalEditor,
   setModeChangeCommandRunnerForTests,
 } from "../index.js";
@@ -296,11 +297,16 @@ async function installExtensionWithEditorFactory(
     },
   };
 
-  installPiVim(pi);
   await pi.emit("session_start", undefined, ctx);
 
+  const { factory: piVimFactory, cleanup: piVimCleanup } =
+    createPiVimEditorFactory(pi, ctx);
+  editorFactory = piVimFactory;
+
   if (!editorFactory) {
-    throw new Error("expected session_start to install an editor factory");
+    throw new Error(
+      "expected createPiVimEditorFactory to return an editor factory",
+    );
   }
 
   return {
@@ -320,6 +326,7 @@ async function installExtensionWithEditorFactory(
       type?: string;
       reason?: string;
     }): Promise<void> {
+      piVimCleanup(event);
       await pi.emit("session_shutdown", event, ctx);
     },
     get sessionShutdownHandlerCount() {
@@ -3248,8 +3255,18 @@ describe("cursor shape lifecycle", () => {
   it("registers cleanup on session_shutdown and not session_end", async () => {
     const extension = await installExtensionWithEditorFactory();
 
-    assert.equal(extension.sessionShutdownHandlerCount, 1);
+    // pi-vim no longer auto-installs the editor or registers session handlers;
+    // the host owns the slot and invokes the factory handle's `cleanup`. So no
+    // session_shutdown/session_end handlers are registered by the package.
+    assert.equal(extension.sessionShutdownHandlerCount, 0);
     assert.equal(extension.sessionEndHandlerCount, 0);
+
+    // Cleanup is driven by the host via emitShutdown, not by a pi handler.
+    const tui = createCursorShapeTui();
+    extension.editorFactory(tui, stubTheme, stubKeybindings);
+    assert.deepEqual(tui.terminalWrites, []);
+    await extension.emitShutdown();
+    assert.deepEqual(tui.terminalWrites, [RESET_CURSOR_SHAPE]);
   });
 
   it("enables hardware cursor and restores the captured setting on legacy shutdown", async () => {
