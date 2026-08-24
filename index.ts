@@ -4,11 +4,13 @@ import {
   type Theme,
 } from "@earendil-works/pi-coding-agent";
 import {
+  CURSOR_MARKER,
   Key,
   matchesKey,
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
+import { wordWrapLine } from "@earendil-works/pi-tui/dist/components/editor.js";
 import {
   ClipboardMirror,
   type ClipboardReadFn,
@@ -127,7 +129,122 @@ const MODE_COLOR_KEYS: readonly ModeColorKey[] = [
 const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
 const BRACKETED_PASTE_END_TAIL = BRACKETED_PASTE_END.slice(1);
+const REVERSE_VIDEO_START = "\x1b[7m";
+const REVERSE_VIDEO_END = "\x1b[27m";
 const MAX_COUNT = 9999;
+
+type VisualSelectionRange = { start: number; end: number };
+
+type RenderLayoutLine = {
+  logicalLine: number;
+  startIndex: number;
+  text: string;
+};
+
+function ansiSequenceLength(text: string, index: number): number {
+  if (text.startsWith(CURSOR_MARKER, index)) return CURSOR_MARKER.length;
+  if (text[index] !== "\x1b") return 0;
+
+  const next = text[index + 1];
+  if (next === "[") {
+    for (let cursor = index + 2; cursor < text.length; cursor++) {
+      const code = text.charCodeAt(cursor);
+      if (code >= 0x40 && code <= 0x7e) {
+        return cursor - index + 1;
+      }
+    }
+  }
+
+  if (next === "]" || next === "^" || next === "_") {
+    for (let cursor = index + 2; cursor < text.length; cursor++) {
+      if (text[cursor] === "\x07") return cursor - index + 1;
+      if (text[cursor] === "\x1b" && text[cursor + 1] === "\\") {
+        return cursor - index + 2;
+      }
+    }
+  }
+
+  return Math.min(2, text.length - index);
+}
+
+function highlightRenderedLine(
+  line: string,
+  layout: RenderLayoutLine,
+  selection: VisualSelectionRange,
+  paddingX: number,
+): string {
+  const selectedCells = new Set<number>();
+  let sourceCellWidth = 0;
+
+  for (const grapheme of getLineGraphemes(layout.text)) {
+    const start = layout.startIndex + grapheme.start;
+    const end = layout.startIndex + grapheme.end;
+    const cellWidth = visibleWidth(
+      layout.text.slice(grapheme.start, grapheme.end),
+    );
+    if (start < selection.end && end > selection.start) {
+      for (let cell = 0; cell < cellWidth; cell++) {
+        selectedCells.add(sourceCellWidth + cell);
+      }
+    }
+    sourceCellWidth += cellWidth;
+  }
+
+  if (selectedCells.size === 0) return line;
+
+  let result = "";
+  let visibleColumn = 0;
+  let reverseVideo = false;
+  let selectionActive = false;
+
+  for (let index = 0; index < line.length; ) {
+    const controlLength = ansiSequenceLength(line, index);
+    if (controlLength > 0) {
+      const control = line.slice(index, index + controlLength);
+      if (
+        selectionActive &&
+        (control === REVERSE_VIDEO_START ||
+          control === REVERSE_VIDEO_END ||
+          control === "\x1b[0m")
+      ) {
+        result += REVERSE_VIDEO_END;
+        selectionActive = false;
+      }
+      result += control;
+      if (control === REVERSE_VIDEO_START) reverseVideo = true;
+      if (control === REVERSE_VIDEO_END || control === "\x1b[0m") {
+        reverseVideo = false;
+      }
+      index += controlLength;
+      continue;
+    }
+
+    const codePoint = line.codePointAt(index);
+    if (codePoint === undefined) break;
+    const character = String.fromCodePoint(codePoint);
+    const cellWidth = visibleWidth(character);
+    const sourceCellIndex = visibleColumn - paddingX;
+    const selected =
+      sourceCellIndex >= 0 &&
+      sourceCellIndex < sourceCellWidth &&
+      selectedCells.has(sourceCellIndex);
+
+    if (selected && !reverseVideo && !selectionActive) {
+      result += REVERSE_VIDEO_START;
+      selectionActive = true;
+    } else if (!selected && selectionActive) {
+      result += REVERSE_VIDEO_END;
+      selectionActive = false;
+    }
+
+    result += character;
+    visibleColumn += cellWidth;
+    index += character.length;
+  }
+
+  if (selectionActive) result += REVERSE_VIDEO_END;
+  return result;
+}
 const TEXT_INSERT_REPEAT_KEYS = new Set(["i", "a", "A", "I"]);
 const OPEN_LINE_REPEAT_KEYS = new Set(["o", "O"]);
 const REPEATABLE_COMMAND_START_KEYS = new Set([
@@ -4099,9 +4216,101 @@ export class ModalEditor extends CustomEditor {
     this.lastCursorShapeSequence = sequence;
   }
 
+  private getVisualSelectionRanges(): Map<number, VisualSelectionRange> {
+    const ranges = new Map<number, VisualSelectionRange>();
+    const lines = this.getLines();
+    if (!isVisualMode(this.mode) || lines.length === 0) return ranges;
+
+    if (this.mode === "visual-line") {
+      const { startLine, endLine } = getVisualLineRange(
+        this.getVisualAnchor(),
+        this.getCursor(),
+      );
+      for (let line = startLine; line <= endLine; line++) {
+        ranges.set(line, { start: 0, end: lines[line]?.length ?? 0 });
+      }
+      return ranges;
+    }
+
+    const { startAbs, endAbs } = this.getVisualCharwiseRange();
+    let lineStartAbs = 0;
+    for (let line = 0; line < lines.length; line++) {
+      const lineText = lines[line] ?? "";
+      const start = Math.max(0, startAbs - lineStartAbs);
+      const end = Math.min(lineText.length, endAbs - lineStartAbs);
+      if (end > start) ranges.set(line, { start, end });
+      lineStartAbs += lineText.length + 1;
+    }
+    return ranges;
+  }
+
+  private getRenderLayoutLines(width: number): {
+    paddingX: number;
+    lines: RenderLayoutLine[];
+  } {
+    const maxPadding = Math.max(0, Math.floor((width - 1) / 2));
+    const paddingX = Math.min(this.getPaddingX(), maxPadding);
+    const contentWidth = Math.max(1, width - paddingX * 2);
+    const layoutWidth = Math.max(1, contentWidth - (paddingX ? 0 : 1));
+    const layoutLines: RenderLayoutLine[] = [];
+    const editor = this as unknown as {
+      segment: (text: string, mode: "grapheme") => Intl.SegmentData[];
+    };
+
+    for (const [logicalLine, line] of this.getLines().entries()) {
+      const chunks =
+        visibleWidth(line) <= layoutWidth
+          ? [{ text: line, startIndex: 0 }]
+          : wordWrapLine(line, layoutWidth, editor.segment(line, "grapheme"));
+      for (const chunk of chunks) {
+        layoutLines.push({
+          logicalLine,
+          startIndex: chunk.startIndex,
+          text: chunk.text,
+        });
+      }
+    }
+
+    return { paddingX, lines: layoutLines };
+  }
+
+  private applyVisualSelectionHighlight(lines: string[], width: number): void {
+    if (!isVisualMode(this.mode)) return;
+
+    const selections = this.getVisualSelectionRanges();
+    if (selections.size === 0) return;
+
+    const layout = this.getRenderLayoutLines(width);
+    const editor = this as unknown as { scrollOffset?: number };
+    const scrollOffset = Math.max(0, editor.scrollOffset ?? 0);
+    const maxVisibleLines = Math.max(
+      5,
+      Math.floor(this.tui.terminal.rows * 0.3),
+    );
+    const visibleLayoutLines = layout.lines.slice(
+      scrollOffset,
+      scrollOffset + maxVisibleLines,
+    );
+
+    for (const [index, layoutLine] of visibleLayoutLines.entries()) {
+      const selection = selections.get(layoutLine.logicalLine);
+      if (!selection) continue;
+
+      const renderedLineIndex = index + 1;
+      if (renderedLineIndex >= lines.length) break;
+      lines[renderedLineIndex] = highlightRenderedLine(
+        lines[renderedLineIndex] ?? "",
+        layoutLine,
+        selection,
+        layout.paddingX,
+      );
+    }
+  }
+
   render(width: number): string[] {
     const lines = super.render(width);
     this.syncCursorShapeForRender(lines);
+    this.applyVisualSelectionHighlight(lines, width);
     if (lines.length === 0) return lines;
 
     const rawLabel = fitModeLabel(this.getModeLabel(), width);

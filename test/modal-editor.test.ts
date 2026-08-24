@@ -9745,6 +9745,34 @@ describe("visual mode — footer label", () => {
     sendKeys(editor, ["l", "f"]);
     assert.ok(editor.render(80).at(-1)?.endsWith(" VISUAL f_ "));
   });
+
+  it("highlights the complete character-wise visual selection", () => {
+    const { editor } = createEditorWithSpy("hello");
+
+    sendKeys(editor, ["v", "l"]);
+
+    const content = editor.render(80)[1] ?? "";
+    assert.ok(content.includes("\x1b[7mh\x1b[27m"));
+    assert.ok(content.includes("\x1b[7me\x1b[0m"));
+    assert.equal(content.includes("\x1b[7ml"), false);
+  });
+
+  it("highlights line-wise and wrapped visual selections", () => {
+    const linewise = createMultiLineEditor("one\ntwo\nthree");
+    sendKeys(linewise.editor, ["V", "j"]);
+    const linewiseLines = linewise.editor.render(40);
+
+    assert.ok(linewiseLines[1]?.includes("\x1b[7mone\x1b[27m"));
+    assert.ok(linewiseLines[2]?.includes("\x1b[7mt\x1b[0m"));
+    assert.equal(linewiseLines[3]?.includes("\x1b[7m"), false);
+
+    const wrapped = createEditorWithSpy("one two three four five six seven");
+    sendKeys(wrapped.editor, ["v", "l", "l", "l"]);
+    const wrappedLines = wrapped.editor.render(12);
+
+    assert.ok(wrappedLines[1]?.includes("\x1b[7mone\x1b[27m"));
+    assert.equal(wrappedLines[2]?.includes("\x1b[7m"), false);
+  });
 });
 
 describe("visual mode — inert normal-mode commands", () => {
