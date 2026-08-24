@@ -1,6 +1,4 @@
 import { spawn, spawnSync } from "node:child_process";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 const PI_NATIVE_CLIPBOARD_TIMEOUT_MS = 5000;
 const CLIPBOARD_WRITE_TIMEOUT_MS = PI_NATIVE_CLIPBOARD_TIMEOUT_MS + 500;
@@ -55,33 +53,20 @@ function isClipboardEnvironmentFailure(error: unknown): boolean {
   return error instanceof ClipboardSpawnError || isNodeSpawnErrno(error);
 }
 
-function resolvePiPackageBaseUrl(): string {
-  const packageDir = process.env.PI_PACKAGE_DIR;
-  if (packageDir) {
-    return pathToFileURL(join(packageDir, "package.json")).href;
-  }
-  return import.meta.resolve("@earendil-works/pi-coding-agent");
-}
-
-const PI_PACKAGE_BASE_URL = resolvePiPackageBaseUrl();
-// A standalone Bun build reports the Pi executable as process.execPath, but
-// process.argv[0] remains the Bun runtime that can execute a helper script.
-const CLIPBOARD_RUNTIME = process.versions.bun
-  ? (process.argv[0] ?? process.execPath)
-  : process.execPath;
+const PI_CODING_AGENT_MODULE_URL = import.meta.resolve(
+  "@earendil-works/pi-coding-agent",
+);
 const CLIPBOARD_HELPER_COPY_FAILED_EXIT_CODE = 2;
 const CLIPBOARD_HELPER_SOURCE = `
-import { createRequire } from "node:module";
+import { copyToClipboard } from ${JSON.stringify(PI_CODING_AGENT_MODULE_URL)};
 
-const require = createRequire(${JSON.stringify(PI_PACKAGE_BASE_URL)});
-const clipboard = require("@mariozechner/clipboard");
 const chunks = [];
 for await (const chunk of process.stdin) {
   chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
 }
 
 try {
-  await Promise.resolve(clipboard.setText(Buffer.concat(chunks).toString("utf8")));
+  await Promise.resolve(copyToClipboard(Buffer.concat(chunks).toString("utf8")));
 } catch {
   process.exitCode = ${CLIPBOARD_HELPER_COPY_FAILED_EXIT_CODE};
 }
@@ -90,7 +75,7 @@ try {
 const CLIPBOARD_READ_HELPER_SOURCE = `
 import { createRequire } from "node:module";
 
-const require = createRequire(${JSON.stringify(PI_PACKAGE_BASE_URL)});
+const require = createRequire(${JSON.stringify(PI_CODING_AGENT_MODULE_URL)});
 const clipboard = require("@mariozechner/clipboard");
 if (!await clipboard.hasText()) {
   process.exit(0);
@@ -104,7 +89,7 @@ if (typeof text === "string") {
 export function readClipboardInChildProcess(): string | null {
   try {
     const result = spawnSync(
-      CLIPBOARD_RUNTIME,
+      process.execPath,
       ["--input-type=module", "-e", CLIPBOARD_READ_HELPER_SOURCE],
       {
         encoding: "utf8",
@@ -178,7 +163,7 @@ export function writeClipboardInChildProcess(
 
     try {
       child = spawn(
-        CLIPBOARD_RUNTIME,
+        process.execPath,
         ["--input-type=module", "-e", CLIPBOARD_HELPER_SOURCE],
         {
           stdio: ["pipe", "pipe", "ignore"],

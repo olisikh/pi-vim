@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { createPiVimEditorFactory } from "../index.js";
+import installPiVim from "../index.js";
 import type { stubKeybindings } from "../test/harness.js";
 import {
   createExtensionApiHarness,
@@ -305,8 +305,7 @@ async function installSupportedOrder(
   const pi = createPiHarness();
   const harness = createRuntimeHarness(workspace, pi);
 
-  const { factory: piVimFactory } = createPiVimEditorFactory(pi, harness.ctx);
-  harness.ctx.ui.setEditorComponent(piVimFactory);
+  installPiVim(pi);
   imageExtension(pi);
 
   await pi.emit("session_start", { reason: "startup" }, harness.ctx);
