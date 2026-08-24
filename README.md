@@ -340,7 +340,7 @@ Typing done in an implicit insert session is repeatable too: the prompt opens in
 | `Y` | Yank every touched line |
 | `C` / `S` | Replace every touched line with one empty line and enter Insert mode |
 
-**The selection is not highlighted.** The footer reads ` VISUAL ` or ` V-LINE ` and the block cursor marks the moving end, but the span between the anchor and the cursor renders as ordinary text. Selection highlighting needs a render-layer change and is deferred.
+The selected text is rendered with reverse video, matching the block cursor and making both character-wise and line-wise selections visible. The footer reads ` VISUAL ` or ` V-LINE ` and the block cursor marks the moving end.
 
 Line-wise selections put a trailing newline in the register, so a following `p` pastes whole lines. A count typed before `v` or `V` is discarded rather than sizing the selection (`2v` behaves as `v`).
 

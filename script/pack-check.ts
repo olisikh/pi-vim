@@ -238,9 +238,15 @@ const THRESHOLDS = {
   // .ts grows — the new parity cases live in test/, which the package excludes.
   // Measured packed 57943 B, unpacked 228770 B. Budgets bumped 57300 -> 58500
   // and 226300 -> 229600, leaving ~557 B / ~830 B headroom. Files stay at 17.
+  //
+  // Visual selection rendering: index.ts decorates character-wise and line-wise
+  // selections with reverse video while preserving the editor's cursor markers,
+  // ANSI controls, wrapping, and scrolling; README documents the visible span.
+  // Measured packed 60214 B, unpacked 237523 B. Budgets bumped 58500 -> 60700
+  // and 229600 -> 238400, leaving ~486 B / ~877 B headroom. Files stay at 17.
   maxFiles: 17,
-  maxSize: 58500,
-  maxUnpackedSize: 229600,
+  maxSize: 60700,
+  maxUnpackedSize: 238400,
 } as const;
 
 function compareStrings(a: string, b: string): number {
