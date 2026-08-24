@@ -359,6 +359,14 @@ type ModalEditorInternals = {
 
 type CustomEditorConstructorArgs = ConstructorParameters<typeof CustomEditor>;
 
+type TranscriptViewport = {
+  scrollToTop?: () => void;
+  scrollToBottom?: () => void;
+  // Pi's fullscreen implementation currently exposes this runtime method but
+  // not through ExtensionAPI. Keep it optional so regular mode stays safe.
+  openSearch?: () => void;
+};
+
 type ModalEditorOptions = {
   labelColorizers?: ModeColorizers | null;
   borderColorizers?: ModeColorizers | null;
@@ -431,6 +439,9 @@ export class ModalEditor extends CustomEditor {
   private readonly cursorShapeRuntime: CursorShapeRuntime | null;
   private lastCursorShapeSequence: CursorShapeSequence | null = null;
   private lastLineCache = { l: "", w: 0, label: "", result: "" };
+  // Fullscreen Pi supplies these methods on its TUI. In regular mode they are
+  // absent, preserving the usual prompt-buffer gg/G behavior.
+  private readonly transcriptViewport: TranscriptViewport;
 
   private unnamedRegister: string = "";
   private preferRegisterForPut = false;
@@ -474,6 +485,7 @@ export class ModalEditor extends CustomEditor {
     opts?: ModalEditorOptions,
   ) {
     super(tui, theme, kb);
+    this.transcriptViewport = tui as unknown as TranscriptViewport;
     this.cursorShapeRuntime = getCursorShapeRuntime(tui);
     this.labelColorizers = opts?.labelColorizers ?? null;
     this.borderColorizers = opts?.borderColorizers ?? null;
@@ -536,6 +548,23 @@ export class ModalEditor extends CustomEditor {
   }
   getText(): string {
     return this.getLines().join("\n");
+  }
+
+  private scrollTranscript(edge: "top" | "bottom"): boolean {
+    const scroll =
+      edge === "top"
+        ? this.transcriptViewport.scrollToTop
+        : this.transcriptViewport.scrollToBottom;
+    if (typeof scroll !== "function") return false;
+    scroll.call(this.transcriptViewport);
+    return true;
+  }
+
+  private openTranscriptSearch(): boolean {
+    const openSearch = this.transcriptViewport.openSearch;
+    if (typeof openSearch !== "function") return false;
+    openSearch.call(this.transcriptViewport);
+    return true;
   }
 
   private getActiveMode(): ModeColorKey {
@@ -2449,7 +2478,15 @@ export class ModalEditor extends CustomEditor {
 
       if (!hadGCount) {
         if (data === "g") {
+          const hasPrefixCount = this.prefixCount.length > 0;
           const count = this.takeTotalCount(1);
+          if (
+            !hasPrefixCount &&
+            this.mode === "normal" &&
+            this.scrollTranscript("top")
+          ) {
+            return;
+          }
           this.moveCursorToLineStart(count - 1);
           return;
         }
@@ -2604,12 +2641,17 @@ export class ModalEditor extends CustomEditor {
       return;
     }
 
+    if (data === "/") {
+      if (this.mode === "normal" && this.openTranscriptSearch()) return;
+    }
+
     if (data === ":") {
       this.startPendingExCommand();
       return;
     }
 
     if (data === "G") {
+      if (this.mode === "normal" && this.scrollTranscript("bottom")) return;
       this.moveCursorToBufferEnd();
       return;
     }

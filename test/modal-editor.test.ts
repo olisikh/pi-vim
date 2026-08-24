@@ -4288,6 +4288,76 @@ describe("Universal Counts State & Bounds", () => {
   });
 });
 
+describe("fullscreen transcript navigation — gg / G", () => {
+  it("uses uncounted gg, G, and / to control the Pi fullscreen transcript", () => {
+    const calls = { top: 0, bottom: 0, search: 0 };
+    const tui = {
+      ...stubTui,
+      scrollToTop: () => {
+        calls.top++;
+      },
+      scrollToBottom: () => {
+        calls.bottom++;
+      },
+      openSearch: () => {
+        calls.search++;
+      },
+    } as unknown as ConstructorParameters<typeof ModalEditor>[0];
+    const editor = new ModalEditor(tui, stubTheme, stubKeybindings);
+
+    editor.handleInput("\x1b");
+    sendKeys(editor, ["g", "g", "G", "/"]);
+
+    assert.deepEqual(calls, { top: 1, bottom: 1, search: 1 });
+  });
+
+  it("keeps counted gg and G as prompt-buffer motions", () => {
+    const calls = { top: 0, bottom: 0 };
+    const tui = {
+      ...stubTui,
+      scrollToTop: () => {
+        calls.top++;
+      },
+      scrollToBottom: () => {
+        calls.bottom++;
+      },
+    } as unknown as ConstructorParameters<typeof ModalEditor>[0];
+    const editor = new ModalEditor(tui, stubTheme, stubKeybindings);
+
+    editor.setText("alpha\nbeta\ngamma");
+    editor.handleInput("\x1b");
+    sendKeys(editor, ["2", "g", "g", "2", "G"]);
+
+    assert.deepEqual(calls, { top: 0, bottom: 0 });
+    assert.deepEqual(editor.getCursor(), { line: 1, col: 0 });
+  });
+
+  it("keeps gg, G, and / as prompt-buffer motions in Visual mode", () => {
+    const calls = { top: 0, bottom: 0, search: 0 };
+    const tui = {
+      ...stubTui,
+      scrollToTop: () => {
+        calls.top++;
+      },
+      scrollToBottom: () => {
+        calls.bottom++;
+      },
+      openSearch: () => {
+        calls.search++;
+      },
+    } as unknown as ConstructorParameters<typeof ModalEditor>[0];
+    const editor = new ModalEditor(tui, stubTheme, stubKeybindings);
+
+    editor.setText("alpha\nbeta\ngamma");
+    editor.handleInput("\x1b");
+    setInternalCursor(editor, 0, 2);
+    sendKeys(editor, ["v", "g", "g", "G", "/"]);
+
+    assert.deepEqual(calls, { top: 0, bottom: 0, search: 0 });
+    assert.deepEqual(editor.getCursor(), { line: 2, col: 0 });
+  });
+});
+
 describe("buffer motions — gg / G", () => {
   it("gg from the last line reaches line 0", () => {
     const editor = createEditorAtBufferEnd("alpha\nbeta\ngamma");

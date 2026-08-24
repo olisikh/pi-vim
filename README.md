@@ -147,7 +147,9 @@ Most navigation keys accept a `{count}` prefix (max: `9999`); `%` intentionally 
 |---|---|
 | `h` / `l` / `j` / `k`; `{count}h/l/j/k` | Move left/right/down/up; line moves clamp to the buffer |
 | `0` / `^` / `_` / `$` | Line start / first non-whitespace / counted first non-whitespace / line end |
-| `gg` / `G`; `{count}gg` / `{count}G` | Buffer start/end or absolute 1-indexed line |
+| `gg` / `G` | In Pi fullscreen mode, jump to the transcript start/end; otherwise prompt-buffer start/end |
+| `/` | In Pi fullscreen mode, open Pi's native transcript search; otherwise no-op |
+| `{count}gg` / `{count}G` | Prompt-buffer absolute 1-indexed line |
 | `gM`; `{count}gM` | Halfway the text of the line; a count of `1`-`100` moves to that percentage of it (higher counts mean halfway, per nvim); text is measured in graphemes, not screen cells |
 | `w` / `b` / `e`; `{count}w/b/e` | `word` start/back/end motions |
 | `W` / `B` / `E`; `{count}W/B/E` | whitespace-delimited `WORD` motions |
@@ -490,6 +492,7 @@ pi-vim does not bundle any such tool and does not care which one you use — any
 | Count prefix | Operators, motions, navigation, `x`, `r`, `p`, `P`; capped at `MAX_COUNT=9999` | Full support |
 | Named registers / macros / search | Not implemented; the unnamed register is supported | Supported |
 | Ex commands | EX mini-mode quits (`:q`, `:qa`, `:quit`, `:qall`, `:quitall`, and their `!` forms), dispatches non-conflicting Pi slash commands (`:tree`, `:model opus`), and runs shell commands via `:!cmd`; vim ex semantics are reserved, not implemented | Full ex command-line surface |
+| `gg` / `G` / `/` in fullscreen Pi | Uncounted `gg` / `G` jump the conversation transcript and `/` opens Pi's native search; use a count for the corresponding prompt-buffer motion | Both forms move within the current buffer/window, and `/` starts backward search |
 | Multi-line operators | `d/c/y` with `w/e/b`, `W/E/B`, `j/k`, and `G`; not the full Vim motion matrix | Rich cross-line semantics |
 
 ---

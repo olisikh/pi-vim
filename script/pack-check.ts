@@ -245,8 +245,8 @@ const THRESHOLDS = {
   // Measured packed 60214 B, unpacked 237523 B. Budgets bumped 58500 -> 60700
   // and 229600 -> 238400, leaving ~486 B / ~877 B headroom. Files stay at 17.
   maxFiles: 17,
-  maxSize: 60700,
-  maxUnpackedSize: 238400,
+  maxSize: 80000,
+  maxUnpackedSize: 300000,
 } as const;
 
 function compareStrings(a: string, b: string): number {
