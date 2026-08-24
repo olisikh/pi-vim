@@ -13,7 +13,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { CURSOR_MARKER, visibleWidth } from "@earendil-works/pi-tui";
-import installPiVim, {
+import {
+  createPiVimEditorFactory,
   ModalEditor,
   setModeChangeCommandRunnerForTests,
 } from "../index.js";
@@ -296,11 +297,16 @@ async function installExtensionWithEditorFactory(
     },
   };
 
-  installPiVim(pi);
   await pi.emit("session_start", undefined, ctx);
 
+  const { factory: piVimFactory, cleanup: piVimCleanup } =
+    createPiVimEditorFactory(pi, ctx);
+  editorFactory = piVimFactory;
+
   if (!editorFactory) {
-    throw new Error("expected session_start to install an editor factory");
+    throw new Error(
+      "expected createPiVimEditorFactory to return an editor factory",
+    );
   }
 
   return {
@@ -320,6 +326,7 @@ async function installExtensionWithEditorFactory(
       type?: string;
       reason?: string;
     }): Promise<void> {
+      piVimCleanup(event);
       await pi.emit("session_shutdown", event, ctx);
     },
     get sessionShutdownHandlerCount() {
@@ -439,7 +446,7 @@ type HelperRunResult = {
 const CLIPBOARD_HELPER_TEST_TIMEOUT_MS = 5_000;
 
 async function getClipboardHelperSourceWithMock(
-  mockModuleSource: string,
+  mockClipboardExpression: string,
 ): Promise<string> {
   const indexSource = await readFile(
     new URL("../clipboard-mirror.ts", import.meta.url),
@@ -452,51 +459,32 @@ async function getClipboardHelperSourceWithMock(
   assert.ok(match, "CLIPBOARD_HELPER_SOURCE not found");
   assert.ok(match[1], "CLIPBOARD_HELPER_SOURCE was empty");
 
-  const mockModuleUrl = `data:text/javascript,${encodeURIComponent(mockModuleSource)}`;
-  const helperImportLine = [
-    "import { copyToClipboard } from ",
+  const requireLine = [
+    "const require = createRequire(",
     "$",
-    "{JSON.stringify(PI_CODING_AGENT_MODULE_URL)};",
+    "{JSON.stringify(PI_PACKAGE_BASE_URL)});",
   ].join("");
-  const replacementImportLine = `import { copyToClipboard } from ${JSON.stringify(mockModuleUrl)};`;
+  const clipboardLine = 'const clipboard = require("@mariozechner/clipboard");';
+  const replacement = `const clipboard = ${mockClipboardExpression};`;
   const helperSource = match[1];
-
-  assert.equal(
-    helperSource.includes(helperImportLine),
-    true,
-    "clipboard helper import not found",
-  );
-
-  // The template body is raw source here, so runtime interpolations must be
-  // substituted the same way index.ts would; keep this list in step with
-  // CLIPBOARD_HELPER_SOURCE.
-  const exitCodeToken = ["$", "{CLIPBOARD_HELPER_COPY_FAILED_EXIT_CODE}"].join(
-    "",
-  );
-
   const mockedSource = helperSource
-    .replace(helperImportLine, replacementImportLine)
-    .replace(exitCodeToken, "2");
+    .replace(`${requireLine}\n${clipboardLine}`, replacement)
+    .replace(["$", "{CLIPBOARD_HELPER_COPY_FAILED_EXIT_CODE}"].join(""), "2");
 
   assert.notEqual(
     mockedSource,
     helperSource,
-    "clipboard helper import was not replaced",
+    "clipboard helper setup was not replaced",
   );
   assert.equal(
-    mockedSource.includes(helperImportLine),
+    mockedSource.includes(requireLine),
     false,
-    "real clipboard helper import remains",
+    "real clipboard helper require remains",
   );
   assert.equal(
-    mockedSource.includes(replacementImportLine),
+    mockedSource.includes(replacement),
     true,
-    "mock clipboard import missing",
-  );
-  assert.equal(
-    mockedSource.includes(exitCodeToken),
-    false,
-    "copy-failed exit code interpolation was not substituted",
+    "mock clipboard object missing",
   );
 
   return mockedSource;
@@ -519,7 +507,7 @@ async function getClipboardReadHelperSourceWithMock(
   const requireLine = [
     "const require = createRequire(",
     "$",
-    "{JSON.stringify(PI_CODING_AGENT_MODULE_URL)});",
+    "{JSON.stringify(PI_PACKAGE_BASE_URL)});",
   ].join("");
   const clipboardLine = 'const clipboard = require("@mariozechner/clipboard");';
   const replacement = `const clipboard = ${mockClipboardExpression};`;
@@ -3267,8 +3255,18 @@ describe("cursor shape lifecycle", () => {
   it("registers cleanup on session_shutdown and not session_end", async () => {
     const extension = await installExtensionWithEditorFactory();
 
-    assert.equal(extension.sessionShutdownHandlerCount, 1);
+    // pi-vim no longer auto-installs the editor or registers session handlers;
+    // the host owns the slot and invokes the factory handle's `cleanup`. So no
+    // session_shutdown/session_end handlers are registered by the package.
+    assert.equal(extension.sessionShutdownHandlerCount, 0);
     assert.equal(extension.sessionEndHandlerCount, 0);
+
+    // Cleanup is driven by the host via emitShutdown, not by a pi handler.
+    const tui = createCursorShapeTui();
+    extension.editorFactory(tui, stubTheme, stubKeybindings);
+    assert.deepEqual(tui.terminalWrites, []);
+    await extension.emitShutdown();
+    assert.deepEqual(tui.terminalWrites, [RESET_CURSOR_SHAPE]);
   });
 
   it("enables hardware cursor and restores the captured setting on legacy shutdown", async () => {
@@ -3586,12 +3584,14 @@ describe("delete operator — dw / de / db / d$ / d0 / dd", () => {
     assert.deepEqual(rejections, []);
   });
 
-  it("clipboard helper reports Pi copyToClipboard throws via exit code 2", async () => {
+  it("clipboard helper reports clipboard setText throws via exit code 2", async () => {
     const helperSource = await getClipboardHelperSourceWithMock(
       [
-        "export function copyToClipboard(text) {",
-        '  process.stdout.write("copy:" + text);',
-        '  throw new Error("clipboard backend failed");',
+        "{",
+        "  async setText(text) {",
+        '    process.stdout.write("copy:" + text);',
+        '    throw new Error("clipboard backend failed");',
+        "  },",
         "}",
       ].join("\n"),
     );
@@ -3603,11 +3603,13 @@ describe("delete operator — dw / de / db / d$ / d0 / dd", () => {
     assert.equal(result.stdout, "copy:payload");
   });
 
-  it("clipboard helper exits 0 when Pi copyToClipboard succeeds", async () => {
+  it("clipboard helper exits 0 when clipboard setText succeeds", async () => {
     const helperSource = await getClipboardHelperSourceWithMock(
       [
-        "export function copyToClipboard(text) {",
-        '  process.stdout.write("copy:" + text);',
+        "{",
+        "  async setText(text) {",
+        '    process.stdout.write("copy:" + text);',
+        "  },",
         "}",
       ].join("\n"),
     );

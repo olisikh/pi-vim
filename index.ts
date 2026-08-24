@@ -1,6 +1,7 @@
 import {
   CustomEditor,
   type ExtensionAPI,
+  type Theme,
 } from "@earendil-works/pi-coding-agent";
 import {
   Key,
@@ -325,6 +326,10 @@ export class ModalEditor extends CustomEditor {
   private quitFn: () => void = () => {};
   private notifyFn: (message: string) => void = () => {};
   private modeChangeFn: (mode: Mode, prevMode: Mode) => void = () => {};
+  // Injectable abort guard: when set, Normal-mode Esc asks it whether to
+  // proceed with the abort, so a host extension can require a double-Esc
+  // without subclassing or re-implementing the abort trigger.
+  private abortGuard: (() => boolean) | null = null;
   private exCommandSettings: ExCommandSettings = DEFAULT_EX_COMMAND_SETTINGS;
   private commandNamesFn: () => ReadonlySet<string> = () =>
     EX_BUILTIN_COMMAND_NAMES;
@@ -389,6 +394,9 @@ export class ModalEditor extends CustomEditor {
   }
   setModeChangeFn(fn: (mode: Mode, prevMode: Mode) => void): void {
     this.modeChangeFn = fn;
+  }
+  setAbortGuard(fn: (() => boolean) | null): void {
+    this.abortGuard = fn;
   }
   setRunCommandFn(fn: (commandLine: string) => CommandDispatchResult): void {
     this.runCommandFn = fn;
@@ -1488,7 +1496,11 @@ export class ModalEditor extends CustomEditor {
       this.setMode("normal");
       if (this.getCursor().col > 0) this.moveCursorBy(-1);
     } else {
-      super.handleInput("\x1b"); // pass escape to abort agent
+      // pass escape to abort agent; a host can guard the abort (e.g. require
+      // a double-Esc) by returning false from setAbortGuard to suppress it.
+      if (this.abortGuard ? this.abortGuard() : true) {
+        super.handleInput("\x1b");
+      }
     }
   }
 
@@ -4156,77 +4168,110 @@ export class ModalEditor extends CustomEditor {
   }
 }
 
-export default function (pi: ExtensionAPI) {
+export type PiVimEditorFactory = (
+  tui: CustomEditorConstructorArgs[0],
+  editorTheme: CustomEditorConstructorArgs[1],
+  kb: CustomEditorConstructorArgs[2],
+) => ModalEditor;
+
+/** Minimal session context the factory needs. The host's full `ExtensionContext` satisfies this structurally. */
+export interface PiVimEditorContext {
+  cwd: string;
+  hasUI?: boolean;
+  ui: {
+    theme: unknown;
+    notify: (message: string, type: string) => void;
+  };
+  shutdown: () => void;
+}
+
+export interface PiVimEditorHandle {
+  /** Builds a ModalEditor with pi-vim's full wiring (colors, clipboard, ex, commands). */
+  factory: PiVimEditorFactory;
+  /** Tears down cursor-shape support and cancels pending mode-change commands. */
+  cleanup: (event?: { reason?: string }) => void;
+}
+
+/**
+ * Builds pi-vim's ModalEditor factory without installing it. A host extension
+ * owns the single `ctx.ui.setEditorComponent` slot, calls this, and may wrap
+ * the returned editor (e.g. to guard the abort path with a double-Esc). The
+ * factory captures all session-scoped setup; `cleanup` must run on
+ * `session_shutdown`.
+ */
+export function createPiVimEditorFactory(
+  pi: ExtensionAPI,
+  ctx: PiVimEditorContext,
+): PiVimEditorHandle {
+  const piVimSettings = readPiVimSettings(ctx.cwd);
+  const clipboardMirrorPolicy = resolveClipboardMirrorPolicy(
+    piVimSettings.clipboardMirror,
+  );
+  if (clipboardMirrorPolicy.warning && ctx.hasUI) {
+    ctx.ui.notify(clipboardMirrorPolicy.warning, "warning");
+  }
+  const exCommand = resolveExCommandSettings(
+    piVimSettings.exCommand,
+    piVimSettings.globalExCommand,
+  );
+  if (exCommand.warning && ctx.hasUI) {
+    ctx.ui.notify(exCommand.warning, "warning");
+  }
+
+  const t = ctx.ui.theme as Theme | null;
+  const modeColors = resolveModeColors(piVimSettings.modeColors);
+  const reverseVideo = (s: string) => `\x1b[7m${s}\x1b[27m`;
+  const { borderSync, labelSync } = resolveSurfaceSyncMaps(piVimSettings);
+  const labelColorizers = t
+    ? buildModeColorizers(t, modeColors, reverseVideo)
+    : null;
+  const borderColorizers = t ? buildModeColorizers(t, modeColors) : null;
+  const offBorderColor = t ? buildOffBorderColor(t) : null;
+  const modeChangeHandler = createModeChangeHandler(
+    piVimSettings.modeChange,
+    (event) => pi.events.emit("pi-vim:mode-change", event),
+  );
+
   let cursorShapeCleanup: CursorShapeCleanup | null = null;
-
-  pi.on("session_start", (_event, ctx) => {
-    const piVimSettings = readPiVimSettings(ctx.cwd);
-    const clipboardMirrorPolicy = resolveClipboardMirrorPolicy(
-      piVimSettings.clipboardMirror,
-    );
-    if (clipboardMirrorPolicy.warning && ctx.hasUI) {
-      ctx.ui.notify(clipboardMirrorPolicy.warning, "warning");
-    }
-    const exCommand = resolveExCommandSettings(
-      piVimSettings.exCommand,
-      piVimSettings.globalExCommand,
-    );
-    if (exCommand.warning && ctx.hasUI) {
-      ctx.ui.notify(exCommand.warning, "warning");
-    }
-
-    const t = ctx.ui.theme;
-    const modeColors = resolveModeColors(piVimSettings.modeColors);
-    const reverseVideo = (s: string) => `\x1b[7m${s}\x1b[27m`;
-    const { borderSync, labelSync } = resolveSurfaceSyncMaps(piVimSettings);
-    const labelColorizers = t
-      ? buildModeColorizers(t, modeColors, reverseVideo)
-      : null;
-    // Both surfaces get their colorizers unconditionally; the editor installs
-    // the border trap only when a surface actually needs it (see
-    // borderTrapNeeded), so the all-default case stays byte-identical to the
-    // released `false` behavior with the host border untouched.
-    const borderColorizers = t ? buildModeColorizers(t, modeColors) : null;
-    // Enables the "thinking" neutral-default detection; unused by "mode"/"host".
-    const offBorderColor = t ? buildOffBorderColor(t) : null;
-    const modeChangeHandler = createModeChangeHandler(
-      piVimSettings.modeChange,
-      (event) => pi.events.emit("pi-vim:mode-change", event),
-    );
-    ctx.ui.setEditorComponent((tui, theme, kb) => {
-      cursorShapeCleanup = enableCursorShapeSupport(tui);
-      const editor = new ModalEditor(tui, theme, kb, {
-        labelColorizers,
-        borderColorizers,
-        borderSync,
-        labelSync,
-        offBorderColor,
-        labelTransform: reverseVideo,
-      });
-      editor.setClipboardMirrorPolicy(clipboardMirrorPolicy.policy);
-      editor.setQuitFn(() => ctx.shutdown());
-      editor.setNotifyFn((message) => ctx.ui.notify(message, "warning"));
-      editor.setModeChangeFn(modeChangeHandler);
-      editor.setExCommandSettings(exCommand.settings);
-      // Resolved at submit time so commands registered or reloaded mid-session
-      // are dispatchable without restarting.
-      editor.setCommandNamesFn(
-        () =>
-          new Set([
-            ...EX_BUILTIN_COMMAND_NAMES,
-            ...pi.getCommands().map((command) => command.name),
-          ]),
-      );
-      return editor;
+  const factory: PiVimEditorFactory = (tui, editorTheme, kb) => {
+    cursorShapeCleanup = enableCursorShapeSupport(tui);
+    const editor = new ModalEditor(tui, editorTheme, kb, {
+      labelColorizers,
+      borderColorizers,
+      borderSync,
+      labelSync,
+      offBorderColor,
+      labelTransform: reverseVideo,
     });
-  });
-
-  pi.on("session_shutdown", (event) => {
+    editor.setClipboardMirrorPolicy(clipboardMirrorPolicy.policy);
+    editor.setQuitFn(() => ctx.shutdown());
+    editor.setNotifyFn((message) => ctx.ui.notify(message, "warning"));
+    editor.setModeChangeFn(modeChangeHandler);
+    editor.setExCommandSettings(exCommand.settings);
+    editor.setCommandNamesFn(
+      () =>
+        new Set([
+          ...EX_BUILTIN_COMMAND_NAMES,
+          ...pi.getCommands().map((command) => command.name),
+        ]),
+    );
+    return editor;
+  };
+  const cleanup = (event?: { reason?: string }) => {
     try {
       cursorShapeCleanup?.(event);
     } finally {
       cancelModeChangeCommands();
       cursorShapeCleanup = null;
     }
-  });
+  };
+  return { factory, cleanup };
+}
+
+export default function () {
+  // pi-vim no longer installs the prompt editor itself. A host extension owns
+  // the single `ctx.ui.setEditorComponent` slot and composes pi-vim's
+  // ModalEditor via `createPiVimEditorFactory`, so pi-vim cannot fight other
+  // editor extensions (e.g. a double-Esc guard) for the one slot. Loading this
+  // package only makes the factory importable; it registers no tools.
 }
