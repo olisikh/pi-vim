@@ -298,8 +298,9 @@ implemented and cancel the pending operator. Linewise counted yank (`{count}yy`,
 | `P` | Put before cursor (char-wise) / new line above (line-wise) |
 | `{count}p` | Put `{count}` times after cursor |
 | `{count}P` | Put `{count}` times before cursor |
+| `Cmd+V` | Paste the terminal clipboard at the cursor and remain in Normal mode |
 
-Put normally reads the OS clipboard first, but uses the shadow register when the latest mirror was skipped by policy, is still pending, or failed. Paste text ending in `\n` is line-wise. Repeated puts stop at a 512 KiB payload safety cap; one register payload is always inserted whole.
+Put normally reads the OS clipboard first, but uses the shadow register when the latest mirror was skipped by policy, is still pending, or failed. Paste text ending in `\n` is line-wise. Repeated puts stop at a 512 KiB payload safety cap; one register payload is always inserted whole. `Cmd+V` uses the terminal's bracketed-paste stream rather than pi-vim's register; this TTY-only behavior is intentionally covered by simulated unit tests instead of the `feedkeys()`-based Neovim parity harness.
 
 Cursor placement matches Vim except when the first pasted line is all whitespace, where pi-vim lands at column 0. A line-wise put (`yyp`, `yyP`, or any register ending in `\n`) lands on the **first non-blank** of the **first** pasted line, not the end of the pasted text. A char-wise put lands on the **last** inserted character.
 

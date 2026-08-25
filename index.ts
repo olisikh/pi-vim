@@ -404,6 +404,9 @@ export class ModalEditor extends CustomEditor {
   private lastCharMotion: LastCharMotion | null = null;
   private discardingBracketedPasteInNormalMode: boolean = false;
   private pendingEscWhileDiscardingBracketedPasteInNormalMode: boolean = false;
+  private acceptingBracketedPasteInNormalMode: boolean = false;
+  private pendingEscWhileAcceptingBracketedPasteInNormalMode: boolean = false;
+  private bracketedPasteEndTailInNormalMode: string = "";
   private wordBoundaryCache = new WordBoundaryCache();
   private readonly redoStack: EditorSnapshot[] = [];
   private lastRepeatableCommand: RepeatableCommand | null = null;
@@ -1395,6 +1398,32 @@ export class ModalEditor extends CustomEditor {
     }
   }
 
+  /**
+   * Cmd+V reaches the terminal as a bracketed-paste stream. Let the host
+   * editor consume it atomically so Normal-mode clipboard paste behaves like
+   * Pi's normal editor. The tail tracks a split closing marker without
+   * retaining or forwarding any paste text twice.
+   */
+  private acceptBracketedPasteInNormalMode(data: string): boolean {
+    const chunk = this.bracketedPasteEndTailInNormalMode + data;
+
+    if (!this.acceptingBracketedPasteInNormalMode) {
+      if (!chunk.includes(BRACKETED_PASTE_START)) return false;
+      this.acceptingBracketedPasteInNormalMode = true;
+    }
+
+    if (chunk.includes(BRACKETED_PASTE_END)) {
+      this.acceptingBracketedPasteInNormalMode = false;
+      this.bracketedPasteEndTailInNormalMode = "";
+    } else {
+      this.bracketedPasteEndTailInNormalMode = chunk.slice(
+        -(BRACKETED_PASTE_END.length - 1),
+      );
+    }
+
+    return true;
+  }
+
   private stripBracketedPasteInNormalMode(data: string): {
     filtered: string | null;
     stripped: boolean;
@@ -1452,6 +1481,47 @@ export class ModalEditor extends CustomEditor {
       const normalized = this.normalizePendingExCommandInput(data);
       if (normalized === null) return;
       data = normalized;
+    } else if (
+      this.mode === "normal" &&
+      this.pendingMotion === null &&
+      this.pendingTextObject === null &&
+      this.pendingOperator === null &&
+      !this.pendingReplace &&
+      this.prefixCount.length === 0 &&
+      !this.pendingG &&
+      this.acceptBracketedPasteInNormalMode(data)
+    ) {
+      if (
+        this.pendingEscWhileAcceptingBracketedPasteInNormalMode &&
+        isEscapeLikeInput(data)
+      ) {
+        this.pendingEscWhileAcceptingBracketedPasteInNormalMode = false;
+        this.acceptingBracketedPasteInNormalMode = false;
+        this.bracketedPasteEndTailInNormalMode = "";
+        this.clearUnderlyingPasteStateIfActive();
+        this.clearPendingState();
+        this.cancelRepeatableCommand();
+        return;
+      }
+
+      if (this.pendingEscWhileAcceptingBracketedPasteInNormalMode) {
+        data = "\x1b" + data;
+        this.pendingEscWhileAcceptingBracketedPasteInNormalMode = false;
+      } else if (isEscapeLikeInput(data)) {
+        this.pendingEscWhileAcceptingBracketedPasteInNormalMode = true;
+        return;
+      }
+
+      const end = data.indexOf(BRACKETED_PASTE_END);
+      const pasteInput =
+        end === -1 ? data : data.slice(0, end + BRACKETED_PASTE_END.length);
+      const trailingInput =
+        end === -1 ? "" : data.slice(end + BRACKETED_PASTE_END.length);
+
+      this.cancelRepeatableCommand();
+      super.handleInput(pasteInput);
+      if (trailingInput) this.handleInputCore(trailingInput);
+      return;
     } else if (this.mode !== "insert") {
       if (this.discardingBracketedPasteInNormalMode) {
         if (isEscapeLikeInput(data)) {
