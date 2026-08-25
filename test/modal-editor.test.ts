@@ -961,10 +961,28 @@ describe("mode transitions", () => {
     assert.equal(editor.getMode(), "normal");
   });
 
-  it("normal mode ignores bracketed paste payload", () => {
+  it("normal mode accepts bracketed paste payload as one undoable edit", () => {
     const { editor } = createEditorWithSpy("abc");
+    resetUndoHistory(editor);
     sendKeys(editor, ["\x1b[200~PASTE\x1b[201~"]);
+    assert.equal(editor.getText(), "PASTEabc");
+    assert.equal(editor.getMode(), "normal");
+
+    sendKeys(editor, ["u"]);
     assert.equal(editor.getText(), "abc");
+  });
+
+  it("normal mode accepts a split bracketed paste payload", () => {
+    const { editor } = createEditorWithSpy("abc");
+    sendKeys(editor, ["\x1b[200~", "PASTE", "\x1b", "[201~", "x"]);
+    assert.equal(editor.getText(), "PASTEbc");
+    assert.equal(editor.getMode(), "normal");
+  });
+
+  it("normal mode dispatches input trailing a bracketed paste", () => {
+    const { editor } = createEditorWithSpy("abc");
+    sendKeys(editor, ["\x1b[200~PASTE\x1b[201~x"]);
+    assert.equal(editor.getText(), "PASTEbc");
     assert.equal(editor.getMode(), "normal");
   });
 
@@ -9294,12 +9312,12 @@ describe("operator cancellation", () => {
     }
   });
 
-  it("split bracketed paste end marker closes discard state", () => {
+  it("split bracketed paste end marker restores normal input", () => {
     const { editor } = createEditorWithSpy("foo bar");
 
     sendKeys(editor, ["\x1b[200~", "PASTE", "\x1b", "[201~", "w", "x"]);
 
-    assert.equal(editor.getText(), "foo ar");
+    assert.equal(editor.getText(), "PASTEfoo ar");
     assert.equal(editor.getRegister(), "b");
   });
 

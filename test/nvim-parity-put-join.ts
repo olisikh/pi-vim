@@ -164,3 +164,10 @@ describe("nvim parity joins", () => {
     });
   }
 });
+
+describe("nvim parity terminal paste", () => {
+  // The parity driver injects key sequences with feedkeys(), which does not
+  // emulate a terminal Cmd+V bracketed-paste event. Unit tests cover Pi's
+  // intentional Normal-mode terminal-paste behavior instead.
+  it.skip("intentional TTY-only Cmd+V bracketed-paste divergence");
+});
