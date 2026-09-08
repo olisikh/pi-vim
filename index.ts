@@ -141,6 +141,11 @@ type RenderLayoutLine = {
   text: string;
 };
 
+function getRuntimeInternals<T>(value: unknown): T {
+  // SAFETY: callers guard optional runtime internals before use.
+  return value as T;
+}
+
 function ansiSequenceLength(text: string, index: number): number {
   if (text.startsWith(CURSOR_MARKER, index)) return CURSOR_MARKER.length;
   if (text[index] !== "\x1b") return 0;
@@ -415,6 +420,8 @@ export class ModalEditor extends CustomEditor {
   private replayingRepeat: boolean = false;
   private repeatReplayFailed: boolean = false;
   private bufferChangeVersion: number = 0;
+  // Kept incrementally so NORMAL+ rendering does not scan the whole prompt.
+  private promptHasNonWhitespace: boolean = false;
   /**
    * One undo window per vim change, opened on the recorder's change boundaries
    * (or a visual mutating operator). `floor` is the host `undoStack.length` at
@@ -442,8 +449,8 @@ export class ModalEditor extends CustomEditor {
   private readonly cursorShapeRuntime: CursorShapeRuntime | null;
   private lastCursorShapeSequence: CursorShapeSequence | null = null;
   private lastLineCache = { l: "", w: 0, label: "", result: "" };
-  // Fullscreen Pi supplies these methods on its TUI. In regular mode they are
-  // absent, preserving the usual prompt-buffer gg/G behavior.
+  // Fullscreen Pi supplies these methods on its TUI. Uncounted gg/G use them
+  // only while the prompt is empty or whitespace-only.
   private readonly transcriptViewport: TranscriptViewport;
 
   private unnamedRegister: string = "";
@@ -488,7 +495,7 @@ export class ModalEditor extends CustomEditor {
     opts?: ModalEditorOptions,
   ) {
     super(tui, theme, kb);
-    this.transcriptViewport = tui as unknown as TranscriptViewport;
+    this.transcriptViewport = getRuntimeInternals<TranscriptViewport>(tui);
     this.cursorShapeRuntime = getCursorShapeRuntime(tui);
     this.labelColorizers = opts?.labelColorizers ?? null;
     this.borderColorizers = opts?.borderColorizers ?? null;
@@ -688,6 +695,7 @@ export class ModalEditor extends CustomEditor {
     // implicit insert, not a continuation of a host-tainted one.
     this.implicitInsertSuppressed = false;
     super.setText(text);
+    this.promptHasNonWhitespace = text.trim().length > 0;
     this.refreshPendingDispatchRestore(true);
   }
 
@@ -698,6 +706,7 @@ export class ModalEditor extends CustomEditor {
     // ours to replay, and neither is any typing that continues around it.
     this.implicitInsertSuppressed = true;
     super.insertTextAtCursor(text);
+    this.promptHasNonWhitespace ||= text.trim().length > 0;
     this.refreshPendingDispatchRestore(true);
   }
 
@@ -745,7 +754,7 @@ export class ModalEditor extends CustomEditor {
   }
 
   private restoreSnapshot(snapshot: EditorSnapshot): void {
-    const editor = this as unknown as ModalEditorInternals;
+    const editor = getRuntimeInternals<ModalEditorInternals>(this);
     const state = this.requireRedoRestoreState(editor);
 
     const lines = snapshot.text.split("\n");
@@ -815,7 +824,7 @@ export class ModalEditor extends CustomEditor {
   private performRedo(count: number = this.takeTotalCount(1)): void {
     this.discardUndoWindow();
     const maxSteps = Math.max(1, Math.min(MAX_COUNT, count));
-    const editor = this as unknown as ModalEditorInternals;
+    const editor = getRuntimeInternals<ModalEditorInternals>(this);
 
     for (let i = 0; i < maxSteps; i++) {
       const snapshot = this.redoStack[this.redoStack.length - 1];
@@ -846,11 +855,12 @@ export class ModalEditor extends CustomEditor {
   private ensureOnChangeHook(): void {
     if (this.onChangeHooked) return;
 
-    const editor = this as unknown as ModalEditorInternals;
+    const editor = getRuntimeInternals<ModalEditorInternals>(this);
     const originalOnChange = editor.onChange;
 
     editor.onChange = (text: string) => {
       originalOnChange?.(text);
+      this.promptHasNonWhitespace = text.trim().length > 0;
       this.bufferChangeVersion++;
       this.centralInvalidationCheck();
     };
@@ -1069,7 +1079,7 @@ export class ModalEditor extends CustomEditor {
   private openUndoWindow(): void {
     if (this.replayingRepeat) return;
     if (this.undoWindow !== null) return;
-    const editor = this as unknown as ModalEditorInternals;
+    const editor = getRuntimeInternals<ModalEditorInternals>(this);
     const stack = editor.undoStack?.stack;
     if (!stack) return;
     this.undoWindow = {
@@ -1105,7 +1115,8 @@ export class ModalEditor extends CustomEditor {
    * `setText`/`onChange`) so `centralInvalidationCheck` is not tripped.
    */
   private collapseUndoStackTo(target: number): void {
-    const stack = (this as unknown as ModalEditorInternals).undoStack?.stack;
+    const stack =
+      getRuntimeInternals<ModalEditorInternals>(this).undoStack?.stack;
     if (!stack) return;
     if (stack.length > target) stack.length = target;
   }
@@ -1239,7 +1250,7 @@ export class ModalEditor extends CustomEditor {
   }
 
   private applySyntheticEdit(mutation: () => void): void {
-    const editor = this as unknown as ModalEditorInternals;
+    const editor = getRuntimeInternals<ModalEditorInternals>(this);
     if (!editor.state || !Array.isArray(editor.state.lines)) {
       throw new Error("Synthetic edit prerequisite: editor state unavailable");
     }
@@ -1666,11 +1677,11 @@ export class ModalEditor extends CustomEditor {
   }
 
   private clearUnderlyingPasteStateIfActive(): void {
-    const editor = this as unknown as {
+    const editor = getRuntimeInternals<{
       isInPaste?: boolean;
       pasteBuffer?: string;
       pasteCounter?: number;
-    };
+    }>(this);
 
     if (!editor.isInPaste) return;
 
@@ -1809,7 +1820,7 @@ export class ModalEditor extends CustomEditor {
   }
 
   private hasNonEmptyPrompt(): boolean {
-    return this.getText().trim().length > 0;
+    return this.promptHasNonWhitespace;
   }
 
   private static readonly EX_QUIT_NAMES = new Set([
@@ -1896,7 +1907,7 @@ export class ModalEditor extends CustomEditor {
     const snapshot = this.captureSnapshot();
     const savedRedo = [...this.redoStack];
     const savedRepeat = this.lastRepeatableCommand;
-    const undoStack = (this as unknown as ModalEditorInternals).undoStack;
+    const undoStack = getRuntimeInternals<ModalEditorInternals>(this).undoStack;
     const savedUndoDepth = undoStack?.length ?? 0;
 
     return {
@@ -2553,6 +2564,7 @@ export class ModalEditor extends CustomEditor {
           if (
             !hasPrefixCount &&
             this.mode === "normal" &&
+            !this.hasNonEmptyPrompt() &&
             this.scrollTranscript("top")
           ) {
             return;
@@ -2721,7 +2733,13 @@ export class ModalEditor extends CustomEditor {
     }
 
     if (data === "G") {
-      if (this.mode === "normal" && this.scrollTranscript("bottom")) return;
+      if (
+        this.mode === "normal" &&
+        !this.hasNonEmptyPrompt() &&
+        this.scrollTranscript("bottom")
+      ) {
+        return;
+      }
       this.moveCursorToBufferEnd();
       return;
     }
@@ -2992,11 +3010,11 @@ export class ModalEditor extends CustomEditor {
   private tryMoveCursorByState(delta: number): boolean {
     if (delta === 0) return true;
 
-    const editor = this as unknown as {
+    const editor = getRuntimeInternals<{
       state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
       preferredVisualCol?: number;
       tui?: { requestRender?: () => void };
-    };
+    }>(this);
 
     const state = editor.state;
     if (!state || !Array.isArray(state.lines)) return false;
@@ -3035,12 +3053,12 @@ export class ModalEditor extends CustomEditor {
   private moveCursorVertically(delta: number): void {
     if (delta === 0) return;
 
-    const editor = this as unknown as {
+    const editor = getRuntimeInternals<{
       state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
       preferredVisualCol?: number | null;
       lastAction?: string | null;
       tui?: { requestRender?: () => void };
-    };
+    }>(this);
 
     const state = editor.state;
     if (!state || !Array.isArray(state.lines) || state.lines.length === 0) {
@@ -3068,12 +3086,12 @@ export class ModalEditor extends CustomEditor {
   }
 
   private moveCursorToCol(col: number): void {
-    const editor = this as unknown as {
+    const editor = getRuntimeInternals<{
       state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
       preferredVisualCol?: number | null;
       lastAction?: string | null;
       tui?: { requestRender?: () => void };
-    };
+    }>(this);
 
     const state = editor.state;
     if (!state || !Array.isArray(state.lines)) return;
@@ -3085,12 +3103,12 @@ export class ModalEditor extends CustomEditor {
   }
 
   private moveCursorToAbsoluteIndex(abs: number): void {
-    const editor = this as unknown as {
+    const editor = getRuntimeInternals<{
       state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
       preferredVisualCol?: number | null;
       lastAction?: string | null;
       tui?: { requestRender?: () => void };
-    };
+    }>(this);
 
     const state = editor.state;
     if (!state || !Array.isArray(state.lines)) return;
@@ -3104,12 +3122,12 @@ export class ModalEditor extends CustomEditor {
   }
 
   private moveCursorToLineStart(lineIndex: number): void {
-    const editor = this as unknown as {
+    const editor = getRuntimeInternals<{
       state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
       preferredVisualCol?: number | null;
       lastAction?: string | null;
       tui?: { requestRender?: () => void };
-    };
+    }>(this);
 
     const state = editor.state;
     if (!state || !Array.isArray(state.lines) || state.lines.length === 0) {
@@ -3142,7 +3160,7 @@ export class ModalEditor extends CustomEditor {
     if (steps === 0) return;
 
     this.applySyntheticEdit(() => {
-      const editor = this as unknown as ModalEditorInternals;
+      const editor = getRuntimeInternals<ModalEditorInternals>(this);
       const state = editor.state;
       if (!state || !Array.isArray(state.lines)) return;
 
@@ -4104,7 +4122,7 @@ export class ModalEditor extends CustomEditor {
   }
 
   private replaceTextInBuffer(text: string, cursorAbs: number): void {
-    const editor = this as unknown as {
+    const editor = getRuntimeInternals<{
       state?: { lines?: string[]; cursorLine?: number; cursorCol?: number };
       preferredVisualCol?: number | null;
       historyIndex?: number;
@@ -4114,7 +4132,7 @@ export class ModalEditor extends CustomEditor {
       pushUndoSnapshot?: () => void;
       autocompleteState?: unknown;
       updateAutocomplete?: () => void;
-    };
+    }>(this);
     const state = editor.state;
     if (!state) return;
     const currentText = this.getText();
@@ -4365,9 +4383,9 @@ export class ModalEditor extends CustomEditor {
     const contentWidth = Math.max(1, width - paddingX * 2);
     const layoutWidth = Math.max(1, contentWidth - (paddingX ? 0 : 1));
     const layoutLines: RenderLayoutLine[] = [];
-    const editor = this as unknown as {
+    const editor = getRuntimeInternals<{
       segment: (text: string, mode: "grapheme") => Intl.SegmentData[];
-    };
+    }>(this);
 
     for (const [logicalLine, line] of this.getLines().entries()) {
       const chunks =
@@ -4393,7 +4411,7 @@ export class ModalEditor extends CustomEditor {
     if (selections.size === 0) return;
 
     const layout = this.getRenderLayoutLines(width);
-    const editor = this as unknown as { scrollOffset?: number };
+    const editor = getRuntimeInternals<{ scrollOffset?: number }>(this);
     const scrollOffset = Math.max(0, editor.scrollOffset ?? 0);
     const maxVisibleLines = Math.max(
       5,
@@ -4460,6 +4478,7 @@ export class ModalEditor extends CustomEditor {
 
     const prefixCount = this.prefixCount;
     const operatorCount = this.operatorCount;
+    const normalLabel = this.hasNonEmptyPrompt() ? "NORMAL+" : "NORMAL";
 
     if (isVisualMode(this.mode)) {
       const name = this.mode === "visual" ? "VISUAL" : "V-LINE";
@@ -4468,24 +4487,26 @@ export class ModalEditor extends CustomEditor {
     }
 
     if (this.pendingReplace) {
-      return prefixCount ? ` NORMAL ${prefixCount}r_ ` : " NORMAL r_ ";
+      return prefixCount
+        ? ` ${normalLabel} ${prefixCount}r_ `
+        : ` ${normalLabel} r_ `;
     }
     if (this.pendingOperator && this.pendingMotion) {
-      return ` NORMAL ${prefixCount}${this.pendingOperator}${operatorCount}${this.pendingMotion}_ `;
+      return ` ${normalLabel} ${prefixCount}${this.pendingOperator}${operatorCount}${this.pendingMotion}_ `;
     }
     if (this.pendingOperator) {
-      return ` NORMAL ${prefixCount}${this.pendingOperator}${operatorCount}_ `;
+      return ` ${normalLabel} ${prefixCount}${this.pendingOperator}${operatorCount}_ `;
     }
-    if (this.pendingMotion) return ` NORMAL ${this.pendingMotion}_ `;
+    if (this.pendingMotion) return ` ${normalLabel} ${this.pendingMotion}_ `;
     if (this.pendingG) {
       return this.pendingGCount
-        ? ` NORMAL g${this.pendingGCount}_ `
-        : " NORMAL g_ ";
+        ? ` ${normalLabel} g${this.pendingGCount}_ `
+        : ` ${normalLabel} g_ `;
     }
 
     const count = `${prefixCount}${operatorCount}`;
-    if (count) return ` NORMAL ${count}_ `;
-    return " NORMAL ";
+    if (count) return ` ${normalLabel} ${count}_ `;
+    return ` ${normalLabel} `;
   }
 }
 

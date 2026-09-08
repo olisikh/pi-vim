@@ -4307,7 +4307,7 @@ describe("Universal Counts State & Bounds", () => {
 });
 
 describe("fullscreen transcript navigation — gg / G", () => {
-  it("uses uncounted gg, G, and / to control the Pi fullscreen transcript", () => {
+  it("uses uncounted gg and G for empty or whitespace-only prompts", () => {
     const calls = { top: 0, bottom: 0, search: 0 };
     const tui = {
       ...stubTui,
@@ -4325,8 +4325,34 @@ describe("fullscreen transcript navigation — gg / G", () => {
 
     editor.handleInput("\x1b");
     sendKeys(editor, ["g", "g", "G", "/"]);
+    editor.setText(" \t\n ");
+    sendKeys(editor, ["g", "g", "G"]);
 
-    assert.deepEqual(calls, { top: 1, bottom: 1, search: 1 });
+    assert.deepEqual(calls, { top: 2, bottom: 2, search: 1 });
+  });
+
+  it("keeps uncounted gg and G in a non-empty prompt buffer", () => {
+    const calls = { top: 0, bottom: 0 };
+    const tui = {
+      ...stubTui,
+      scrollToTop: () => {
+        calls.top++;
+      },
+      scrollToBottom: () => {
+        calls.bottom++;
+      },
+    } as unknown as ConstructorParameters<typeof ModalEditor>[0];
+    const editor = new ModalEditor(tui, stubTheme, stubKeybindings);
+
+    editor.setText("alpha\nbeta\ngamma");
+    editor.handleInput("\x1b");
+    setInternalCursor(editor, 0, 2);
+    sendKeys(editor, ["g", "g"]);
+    assert.deepEqual(editor.getCursor(), { line: 0, col: 0 });
+
+    sendKeys(editor, ["G"]);
+    assert.deepEqual(editor.getCursor(), { line: 2, col: 0 });
+    assert.deepEqual(calls, { top: 0, bottom: 0 });
   });
 
   it("keeps counted gg and G as prompt-buffer motions", () => {
@@ -4342,7 +4368,7 @@ describe("fullscreen transcript navigation — gg / G", () => {
     } as unknown as ConstructorParameters<typeof ModalEditor>[0];
     const editor = new ModalEditor(tui, stubTheme, stubKeybindings);
 
-    editor.setText("alpha\nbeta\ngamma");
+    editor.setText(" \n \n ");
     editor.handleInput("\x1b");
     sendKeys(editor, ["2", "g", "g", "2", "G"]);
 
@@ -4373,6 +4399,28 @@ describe("fullscreen transcript navigation — gg / G", () => {
 
     assert.deepEqual(calls, { top: 0, bottom: 0, search: 0 });
     assert.deepEqual(editor.getCursor(), { line: 2, col: 0 });
+  });
+});
+
+describe("normal-mode prompt marker", () => {
+  it("renders NORMAL+ only while the prompt contains non-whitespace text", () => {
+    const editor = new ModalEditor(stubTui, stubTheme, stubKeybindings);
+
+    editor.setText(" \t\n ");
+    editor.handleInput("\x1b");
+    assert.ok(editor.render(80).at(-1)?.endsWith(" NORMAL "));
+
+    editor.setText("x");
+    setInternalCursor(editor, 0);
+    assert.ok(editor.render(80).at(-1)?.endsWith(" NORMAL+ "));
+
+    sendKeys(editor, ["x"]);
+    assert.equal(editor.getText(), "");
+    assert.ok(editor.render(80).at(-1)?.endsWith(" NORMAL "));
+
+    editor.setText("x");
+    sendKeys(editor, ["g"]);
+    assert.ok(editor.render(80).at(-1)?.endsWith(" NORMAL+ g_ "));
   });
 });
 

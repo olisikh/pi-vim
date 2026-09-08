@@ -28,7 +28,7 @@ Hit `Esc` and the prompt is a modal editor: INSERT, NORMAL, VISUAL, and V-LINE. 
 
 ### and the comfort layer
 
-Yanks and deletes mirror to the OS clipboard (configurable), the cursor shape follows the mode on DECSCUSR terminals, the footer always shows `INSERT` / `NORMAL` / `VISUAL` / `V-LINE` / `EX`, and mode-colored borders and labels are one setting away — each mode choosing whether to paint its own color, show the host's border, or defer only while the host is thinking.
+Yanks and deletes mirror to the OS clipboard (configurable), the cursor shape follows the mode on DECSCUSR terminals, and the mode label shows `INSERT` / `NORMAL` / `NORMAL+` / `VISUAL` / `V-LINE` / `EX`. `NORMAL+` means the prompt contains non-whitespace text (not that it differs from a saved baseline). Mode-colored borders and labels are one setting away — each mode choosing whether to paint its own color, show the host's border, or defer only while the host is thinking.
 
 ## 30-second quickstart
 
@@ -46,7 +46,7 @@ u              # undo
 Common quick wins:
 
 | goal | keys |
-|---|---|
+| --- | --- |
 | Jump to exact line 25 | `25gg` (or `25G`) |
 | Delete two words | `2dw` |
 | Change current whitespace-delimited WORD | `ciW` |
@@ -70,7 +70,7 @@ Common quick wins:
 ### mode switching
 
 | key | action |
-|---|---|
+| --- | --- |
 | `Esc` / `Ctrl+[` | Insert → Normal mode |
 | `Esc` / `Ctrl+[` | Normal mode → pass to Pi (aborts the agent under default Pi keybindings) |
 | `:` | Normal → EX mini-mode |
@@ -89,7 +89,7 @@ Optional: move Pi's `app.interrupt` off bare `escape` in `~/.pi/agent/keybinding
 Insert-mode shortcuts (stay in Insert mode):
 
 | key | action |
-|---|---|
+| --- | --- |
 | `Shift+Alt+A` | Go to end of line |
 | `Shift+Alt+I` | Go to start of line |
 | `Alt+o` | Open line below |
@@ -100,7 +100,7 @@ Insert-mode shortcuts (stay in Insert mode):
 The ex line handles safe quit flows, dispatches known Pi commands, and sends `:!cmd` to Pi's shell.
 
 | key / command | action |
-|---------------|--------|
+| --------------- | -------- |
 | `:` | Enter EX mini-mode |
 | `Enter` | Execute pending ex command |
 | `Esc` | Cancel EX mini-mode |
@@ -144,10 +144,10 @@ Discoverability is Pi's `/` palette; ex-line completion of command names is not 
 Most navigation keys accept a `{count}` prefix (max: `9999`); `%` intentionally does not.
 
 | key | action |
-|---|---|
+| --- | --- |
 | `h` / `l` / `j` / `k`; `{count}h/l/j/k` | Move left/right/down/up; line moves clamp to the buffer |
 | `0` / `^` / `_` / `$` | Line start / first non-whitespace / counted first non-whitespace / line end |
-| `gg` / `G` | In Pi fullscreen mode, jump to the transcript start/end; otherwise prompt-buffer start/end |
+| `gg` / `G` | With an empty or whitespace-only prompt in Pi fullscreen mode, jump to the transcript start/end; otherwise prompt-buffer start/end |
 | `/` | In Pi fullscreen mode, open Pi's native transcript search; otherwise no-op |
 | `{count}gg` / `{count}G` | Prompt-buffer absolute 1-indexed line |
 | `gM`; `{count}gM` | Halfway the text of the line; a count of `1`-`100` moves to that percentage of it (higher counts mean halfway, per nvim); text is measured in graphemes, not screen cells |
@@ -167,7 +167,7 @@ Most navigation keys accept a `{count}` prefix (max: `9999`); `%` intentionally 
 A `{count}` prefix finds the Nth occurrence of `{char}` on the line.
 
 | key | action |
-|---|---|
+| --- | --- |
 | `f{char}` | Jump forward to `char` (inclusive) |
 | `F{char}` | Jump backward to `char` (inclusive) |
 | `t{char}` | Jump forward to one before `char` (exclusive) |
@@ -189,7 +189,7 @@ Register-writing edits write to the unnamed register. With the default clipboard
 Text objects compose as `d`/`c`/`y` + `i`/`a` + object. `i` means inner; `a` means around.
 
 | object | keys | range |
-|---|---|---|
+| --- | --- | --- |
 | word | `iw` / `aw` | Word, punctuation, or whitespace run under the cursor; `aw` adds adjacent whitespace |
 | WORD | `iW` / `aW` | Line-local WORD or whitespace run under the cursor; `aW` adds adjacent whitespace |
 | quotes | `i"` / `a"`, `i'` / `a'`, <code>i`</code> / <code>a`</code> | Smallest containing quote pair on the line |
@@ -198,6 +198,7 @@ Text objects compose as `d`/`c`/`y` + `i`/`a` + object. `i` means inner; `a` mea
 | braces | `i{` / `a{`; aliases `i}` / `a}`, `iB` / `aB` | Smallest containing pair |
 
 Semantics:
+
 - Word objects follow Neovim's three character classes — keyword (letters including accented and CJK, digits, `_`), punctuation, and whitespace. `iw` selects the run under the cursor (so on `.` or on a space it takes that run, not the next word), and counts span consecutive runs (`2iw` is a word plus the following whitespace). `aw` on a word adds trailing whitespace, or leading whitespace when there is none; on whitespace it adds the following word. `iW`/`aW` collapse punctuation into the WORD, leaving just non-blank and whitespace runs.
 - WORD objects are line-local and whitespace-delimited.
 - Quote objects are line-local; odd-backslash escapes are ignored; `a` includes delimiters only, not surrounding whitespace.
@@ -212,7 +213,7 @@ word, WORD, char-find, and linewise motions; the counts multiply and clamp at
 `9999`.
 
 | command | deletes |
-|---|---|
+| --- | --- |
 | `dw` / `de` / `db`; `dW` / `dE` / `dB` | word/WORD motion ranges; `{count}` repeats |
 | `d$` / `d0` / `d^`; `{count}d$` | To EOL / BOL / first non-whitespace; a counted `$` spans down through that many line ends |
 | `d_` / `dd`; `d{count}_` / `{count}dd` | Current or counted whole lines |
@@ -231,7 +232,7 @@ word/WORD, text-object, and `0` / `^` / `$` motions (counted `c$` spans line
 ends like `d$`). `j`, `k`, `G`, and counted `cc` are unsupported and cancel.
 
 | command | action |
-|---|---|
+| --- | --- |
 | `cw` / `ce` / `cb`; `cW` / `cE` / `cB` | Change word/WORD motion ranges + Insert |
 | `c{count}w/e/b`; `c{count}W/E/B` | Change counted word/WORD motions + Insert |
 | `ciw` / `caw`; `ciW` / `caW` | Change word/WORD text objects + Insert |
@@ -247,7 +248,7 @@ ends like `d$`). `j`, `k`, `G`, and counted `cc` are unsupported and cancel.
 A `{count}` prefix is supported for `x`, `X`, `p`, `P`. Maximum: `9999`.
 
 | key | action |
-|---|---|
+| --- | --- |
 | `x` | Delete char under cursor (no-op at/past EOL) |
 | `X` | Delete char before cursor (no-op at column 0) |
 | `{count}X` | Delete `{count}` chars before cursor, clamping at line start |
@@ -262,7 +263,7 @@ A `{count}` prefix is supported for `x`, `X`, `p`, `P`. Maximum: `9999`.
 #### join lines
 
 | key | action |
-|---|---|
+| --- | --- |
 | `J` / `{count}J` | Join two or `{count}` lines, normalizing boundary whitespace |
 | `gJ` / `{count}gJ` | Join two or `{count}` lines without whitespace normalization |
 
@@ -273,7 +274,7 @@ A `{count}` prefix is supported for `x`, `X`, `p`, `P`. Maximum: `9999`.
 Same motion set as `d`. Writes to register, **no text mutation**.
 
 | command | yanks |
-|---|---|
+| --- | --- |
 | `yy` / `Y`; `{count}yy` / `{count}Y` | Whole line(s) + trailing `\n` |
 | `y{count}j` / `y{count}k` / `yG`; `y_` / `y{count}_` | Linewise ranges |
 | `yw` / `ye` / `yb`; `yW` / `yE` / `yB` | word/WORD motion ranges |
@@ -293,7 +294,7 @@ implemented and cancel the pending operator. Linewise counted yank (`{count}yy`,
 ### put / paste
 
 | key | action |
-|---|---|
+| --- | --- |
 | `p` | Put after cursor (char-wise) / new line below (line-wise) |
 | `P` | Put before cursor (char-wise) / new line above (line-wise) |
 | `{count}p` | Put `{count}` times after cursor |
@@ -309,7 +310,7 @@ Cursor placement matches Vim except when the first pasted line is all whitespace
 ### undo / redo / repeat
 
 | key | action |
-|-----|--------|
+| ----- | -------- |
 | `u` | Undo one change in normal mode |
 | `{count}u` | Undo up to `{count}` changes in normal mode; clamps at available history |
 | `Ctrl+_` | Undo in normal mode (alias for `u`) |
@@ -331,7 +332,7 @@ Typing done in an implicit insert session is repeatable too: the prompt opens in
 `v` starts a character-wise selection and `V` a line-wise one, anchored where you pressed the key. Every normal-mode motion listed above moves the cursor and resizes the selection; counts work as usual (`v2ld`, `V2jd`).
 
 | key | action |
-|-----|--------|
+| ----- | -------- |
 | `v` | Start a character-wise selection; in Visual mode exit, in V-Line switch to character-wise |
 | `V` | Start a line-wise selection; in V-Line exit, in Visual switch to line-wise |
 | `Esc` / `Ctrl+[` | Leave visual mode; the cursor stays where it is |
@@ -402,7 +403,7 @@ Default-equivalent `settings.json`:
 `borderSync` and `labelSync` set a per-mode paint policy for two surfaces: `borderSync` for Pi's input border, `labelSync` for the footer mode label. Each maps the mode keys `insert`, `normal`, `visual`, `ex` to one of three values:
 
 | value | effect |
-|---|---|
+| --- | --- |
 | `mode` | always paint that mode's color (from `modeColors`) |
 | `host` | always show the host's current border color |
 | `thinking` | show the host color while its border is away from the resting default, otherwise paint the mode color |
@@ -480,7 +481,7 @@ pi-vim does not bundle any such tool and does not care which one you use — any
 ## limits and vim differences
 
 | area | this extension | full Vim |
-|---|---|---|
+| --- | --- | --- |
 | Visual `$` motion | Moves to the visible EOL position | Moves to the last character |
 | Line-wise put onto an all-whitespace first line | Lands at col 0 (shares the `^`/`I` all-whitespace behavior) | `^` lands on the last char of the line |
 | Undo / redo | Vim-change-scoped: one `u` reverts one whole vim change (insert session or change command), one `<C-r>` redoes it, and `.` is its own unit; a linear undo/redo list, no undo tree | Full per-change undo tree with `g+`/`g-`/`:earlier` time-travel |
@@ -493,7 +494,8 @@ pi-vim does not bundle any such tool and does not care which one you use — any
 | Count prefix | Operators, motions, navigation, `x`, `r`, `p`, `P`; capped at `MAX_COUNT=9999` | Full support |
 | Named registers / macros / search | Not implemented; the unnamed register is supported | Supported |
 | Ex commands | EX mini-mode quits (`:q`, `:qa`, `:quit`, `:qall`, `:quitall`, and their `!` forms), dispatches non-conflicting Pi slash commands (`:tree`, `:model opus`), and runs shell commands via `:!cmd`; vim ex semantics are reserved, not implemented | Full ex command-line surface |
-| `gg` / `G` / `/` in fullscreen Pi | Uncounted `gg` / `G` jump the conversation transcript and `/` opens Pi's native search; use a count for the corresponding prompt-buffer motion | Both forms move within the current buffer/window, and `/` starts backward search |
+| `gg` / `G` in fullscreen Pi | With an empty or whitespace-only prompt, uncounted `gg` / `G` jump the conversation transcript; with non-whitespace prompt text, they move to the prompt-buffer start/end. Counted forms always target prompt lines. Prompt-buffer jumps land at column 0, intentionally differing from Vim's first-non-blank placement. | Both forms move within the current buffer/window |
+| `/` in fullscreen Pi | Opens Pi's native transcript search regardless of prompt contents | Starts backward search |
 | Multi-line operators | `d/c/y` with `w/e/b`, `W/E/B`, `j/k`, and `G`; not the full Vim motion matrix | Rich cross-line semantics |
 
 ---

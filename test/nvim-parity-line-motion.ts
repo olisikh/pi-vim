@@ -166,6 +166,9 @@ const LINE_MOTION_PARITY_CASES: NvimParityCase[] = [
 
 const KNOWN_NVIM_PARITY_GAPS = new Set([
   "9l: clamps at the final character",
+  // Intentional pi-vim divergence: prompt-buffer gg/G land at column 0.
+  // Fullscreen transcript routing for blank prompts is covered in
+  // modal-editor.test.ts and documented in README.md.
   "gg: moves to the first line with nvim cursor placement",
   "G: moves to the last line with nvim cursor placement",
   "2gg: moves to the counted line with nvim cursor placement",
