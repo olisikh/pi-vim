@@ -90,3 +90,71 @@ This doc records the "next optimization decision" as: build measurement
 its evidence bar is met, else defer with recorded rationale. The benchmark
 command, committed baseline, and idle quantification remain open work items
 tracked by issue #31.
+
+## visual-selection correctness patch evidence
+
+`script/visual-render-compare.ts` is the narrow replay benchmark for the visual
+selection painter. It uses the public editor surface, accepts a base checkout
+through `PIVIM_ENTRY`, warms each fixture for 100 renders, then records nine
+2,000-render samples in microseconds per render. The fixtures cover an 80-column
+long ASCII selection, an 80-column selection containing repeated ZWJ emoji, a
+20-line line-wise selection with cursor/selection ANSI, and a wrapped 32-column
+selection.
+
+Measured on Node v24.20.0, Apple arm64, with three alternating base/head runs;
+the table reports the median of each run's median. Base is `0ee544e`; head is
+`fix/visual-highlight-graphemes`.
+
+| fixture | base µs/render | head µs/render | delta |
+| --- | ---: | ---: | ---: |
+| `long_ascii_80` | 41.313 | 45.870 | +4.557 (+11.0%) |
+| `long_zwj_80` | 44.588 | 48.221 | +3.634 (+8.1%) |
+| `multiline_ansi_80` | 68.104 | 78.113 | +10.009 (+14.7%) |
+| `wrapped_ascii_32` | 41.385 | 44.401 | +3.016 (+7.3%) |
+
+The largest absolute increase is 0.0101 ms per visual-mode render, under 0.07%
+of a 16.67 ms frame budget. The branch accepts that bounded cost to keep the
+render walk grapheme-safe while matching Pi's reverse-video transcript
+selection. Normal and insert rendering return before this path.
+
+Reproduce against a nested base worktree so both entries reuse this checkout's
+dependencies:
+
+```sh
+git worktree add --detach .tmp/visual-highlight-base 0ee544e
+for round in 1 2 3; do
+  PIVIM_ENTRY=.tmp/visual-highlight-base/index.ts \
+    node --import tsx/esm script/visual-render-compare.ts \
+    > "/tmp/pi-vim-render-base-$round.json"
+  node --import tsx/esm script/visual-render-compare.ts \
+    > "/tmp/pi-vim-render-head-$round.json"
+done
+node <<'NODE'
+const fs = require("fs");
+const fixtures = [
+  "long_ascii_80",
+  "long_zwj_80",
+  "multiline_ansi_80",
+  "wrapped_ascii_32",
+];
+const median = (values) =>
+  [...values].sort((left, right) => left - right)[
+    Math.floor(values.length / 2)
+  ];
+for (const fixture of fixtures) {
+  const medians = (side) =>
+    [1, 2, 3].map(
+      (round) =>
+        JSON.parse(
+          fs.readFileSync(`/tmp/pi-vim-render-${side}-${round}.json`),
+        ).metrics[fixture].medianUs,
+    );
+  const base = median(medians("base"));
+  const head = median(medians("head"));
+  const delta = head - base;
+  console.log({ fixture, base, head, delta, percent: (delta / base) * 100 });
+}
+NODE
+git worktree remove .tmp/visual-highlight-base
+rm -f /tmp/pi-vim-render-{base,head}-{1,2,3}.json
+```

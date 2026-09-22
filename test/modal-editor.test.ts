@@ -2632,15 +2632,18 @@ describe("mode color settings", () => {
         stubKeybindings,
       );
 
-      sendKeys(editor, ["h", "i", "\x1b"]);
+      sendKeys(editor, ["h", "i", "\x1b", "0"]);
       editor.render(80);
-      sendKeys(editor, ["v"]);
-      editor.render(80);
+      sendKeys(editor, ["v", "l"]);
+      const visualLines = editor.render(80);
       sendKeys(editor, ["V"]);
       editor.render(80);
 
+      assert.ok(visualLines[1]?.includes("\x1b[7mh\x1b[27m"));
       // Normal renders borderAccent; VISUAL and V-LINE both render the visual
       // default (customMessageLabel), never collapsing onto normal's color.
+      // The selection itself matches Pi's raw reverse-video highlight and does
+      // not consume another theme foreground token.
       assert.deepEqual(
         theme.fgCalls.map((call) => call.token),
         ["borderAccent", "customMessageLabel", "customMessageLabel"],
@@ -9891,6 +9894,19 @@ describe("visual mode — footer label", () => {
     assert.ok(content.includes("\x1b[7mh\x1b[27m"));
     assert.ok(content.includes("\x1b[7me\x1b[0m"));
     assert.equal(content.includes("\x1b[7ml"), false);
+  });
+
+  it("keeps highlighting aligned after a multi-code-point grapheme", () => {
+    const { editor } = createEditorWithSpy("a👩‍💻bc");
+
+    sendKeys(editor, ["v", "l", "l", "l"]);
+
+    const content = editor.render(80)[1] ?? "";
+    assert.ok(content.includes("\x1b[7ma👩‍💻b\x1b[27m"));
+    assert.ok(content.includes("\x1b[7mc\x1b[0m"));
+
+    sendKeys(editor, ["y"]);
+    assert.equal(editor.getRegister(), "a👩‍💻bc");
   });
 
   it("highlights line-wise and wrapped visual selections", () => {
