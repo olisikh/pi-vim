@@ -344,7 +344,7 @@ Typing done in an implicit insert session is repeatable too: the prompt opens in
 | `Y` | Yank every touched line |
 | `C` / `S` | Replace every touched line with one empty line and enter Insert mode |
 
-The selected text is rendered with reverse video, matching the block cursor and making both character-wise and line-wise selections visible. The footer reads ` VISUAL ` or ` V-LINE ` and the block cursor marks the moving end.
+The selected text uses the same reverse-video highlight as Pi's fullscreen transcript selection, making both character-wise and line-wise selections visible. The footer reads ` VISUAL ` or ` V-LINE ` and the block cursor marks the moving end.
 
 Line-wise selections put a trailing newline in the register, so a following `p` pastes whole lines. A count typed before `v` or `V` is discarded rather than sizing the selection (`2v` behaves as `v`).
 
@@ -439,7 +439,7 @@ Give insert a solid mode color, let normal defer to thinking, and make both mode
 
 `piVim.modeColors` accepts Pi theme foreground tokens. Missing, invalid, or unknown tokens use the defaults above.
 
-`visual` colors both VISUAL and V-LINE (the footer label already tells them apart); its `customMessageLabel` default is the purple/violet token both bundled themes ship, keeping visual distinct from normal's `borderAccent`. Override it like any other mode.
+`visual` colors both VISUAL and V-LINE labels (the footer label tells the modes apart); its `customMessageLabel` default is the purple/violet token both bundled themes ship, keeping visual distinct from normal's `borderAccent`. Selection highlighting follows Pi's reverse-video transcript selection instead. Override the label color like any other mode.
 
 Usual/safest tokens: `accent`, `border`, `borderAccent`, `borderMuted`, `success`, `error`, `warning`, `muted`, `dim`, `text`, `thinkingText`.
 
@@ -486,7 +486,7 @@ pi-vim does not bundle any such tool and does not care which one you use — any
 | Line-wise put onto an all-whitespace first line | Lands at col 0 (shares the `^`/`I` all-whitespace behavior) | `^` lands on the last char of the line |
 | Undo / redo | Vim-change-scoped: one `u` reverts one whole vim change (insert session or change command), one `<C-r>` redoes it, and `.` is its own unit; a linear undo/redo list, no undo tree | Full per-change undo tree with `g+`/`g-`/`:earlier` time-travel |
 | Visual mode | `v` and `V` with `d`/`x`, `y`, `c`/`s` and the line-forcing `D`/`X`/`Y`/`C`/`S`; no `<C-v>`, no visual `p`/`r`/`J`/`~`/`>`/`<`/`gv`, no text objects, no `{count}v` | `v`, `V`, `<C-v>` with the full operator set |
-| Visual selection rendering | No highlight; only the footer label and the block cursor mark the selection | Selection is highlighted |
+| Visual selection rendering | Character-wise and line-wise selections use Pi's fullscreen reverse-video selection style; no blockwise `<C-v>` selection | Selection is highlighted with configurable `Visual` groups |
 | Visual line-wise delete | Leaves the cursor at column 0, like `dd` does today | Preserves the cursor column |
 | Visual dot-repeat | A visual edit clears the repeatable command; `.` afterwards does nothing | `.` repeats the operator over an equally sized region |
 | Text objects | `iw` / `aw`, `iW` / `aW`, quote objects, and paren/bracket/brace objects; delimited counts cancel | Full text-object set |

@@ -131,6 +131,8 @@ const BRACKETED_PASTE_END = "\x1b[201~";
 const BRACKETED_PASTE_END_TAIL = BRACKETED_PASTE_END.slice(1);
 const REVERSE_VIDEO_START = "\x1b[7m";
 const REVERSE_VIDEO_END = "\x1b[27m";
+const applyReverseVideo = (text: string): string =>
+  `${REVERSE_VIDEO_START}${text}${REVERSE_VIDEO_END}`;
 const MAX_COUNT = 9999;
 
 type VisualSelectionRange = { start: number; end: number };
@@ -139,6 +141,13 @@ type RenderLayoutLine = {
   logicalLine: number;
   startIndex: number;
   text: string;
+};
+
+type HighlightRenderedLineOptions = {
+  line: string;
+  layout: RenderLayoutLine;
+  selection: VisualSelectionRange;
+  paddingX: number;
 };
 
 function getRuntimeInternals<T>(value: unknown): T {
@@ -172,12 +181,12 @@ function ansiSequenceLength(text: string, index: number): number {
   return Math.min(2, text.length - index);
 }
 
-function highlightRenderedLine(
-  line: string,
-  layout: RenderLayoutLine,
-  selection: VisualSelectionRange,
-  paddingX: number,
-): string {
+function highlightRenderedLine({
+  line,
+  layout,
+  selection,
+  paddingX,
+}: HighlightRenderedLineOptions): string {
   const selectedCells = new Set<number>();
   let sourceCellWidth = 0;
 
@@ -198,23 +207,20 @@ function highlightRenderedLine(
   if (selectedCells.size === 0) return line;
 
   let result = "";
+  let selectedText = "";
   let visibleColumn = 0;
   let reverseVideo = false;
-  let selectionActive = false;
+  const flushSelection = (): void => {
+    if (selectedText.length === 0) return;
+    result += applyReverseVideo(selectedText);
+    selectedText = "";
+  };
 
   for (let index = 0; index < line.length; ) {
     const controlLength = ansiSequenceLength(line, index);
     if (controlLength > 0) {
+      flushSelection();
       const control = line.slice(index, index + controlLength);
-      if (
-        selectionActive &&
-        (control === REVERSE_VIDEO_START ||
-          control === REVERSE_VIDEO_END ||
-          control === "\x1b[0m")
-      ) {
-        result += REVERSE_VIDEO_END;
-        selectionActive = false;
-      }
       result += control;
       if (control === REVERSE_VIDEO_START) reverseVideo = true;
       if (control === REVERSE_VIDEO_END || control === "\x1b[0m") {
@@ -224,30 +230,31 @@ function highlightRenderedLine(
       continue;
     }
 
-    const codePoint = line.codePointAt(index);
-    if (codePoint === undefined) break;
-    const character = String.fromCodePoint(codePoint);
-    const cellWidth = visibleWidth(character);
-    const sourceCellIndex = visibleColumn - paddingX;
-    const selected =
-      sourceCellIndex >= 0 &&
-      sourceCellIndex < sourceCellWidth &&
-      selectedCells.has(sourceCellIndex);
+    const controlIndex = line.indexOf("\x1b", index);
+    const runEnd = controlIndex === -1 ? line.length : controlIndex;
+    const visibleRun = line.slice(index, runEnd);
 
-    if (selected && !reverseVideo && !selectionActive) {
-      result += REVERSE_VIDEO_START;
-      selectionActive = true;
-    } else if (!selected && selectionActive) {
-      result += REVERSE_VIDEO_END;
-      selectionActive = false;
+    for (const grapheme of getLineGraphemes(visibleRun)) {
+      const text = visibleRun.slice(grapheme.start, grapheme.end);
+      const cellWidth = visibleWidth(text);
+      const sourceCellIndex = visibleColumn - paddingX;
+      const selected =
+        sourceCellIndex >= 0 &&
+        sourceCellIndex < sourceCellWidth &&
+        selectedCells.has(sourceCellIndex);
+
+      if (selected && !reverseVideo) {
+        selectedText += text;
+      } else {
+        flushSelection();
+        result += text;
+      }
+      visibleColumn += cellWidth;
     }
-
-    result += character;
-    visibleColumn += cellWidth;
-    index += character.length;
+    index = runEnd;
   }
 
-  if (selectionActive) result += REVERSE_VIDEO_END;
+  flushSelection();
   return result;
 }
 const TEXT_INSERT_REPEAT_KEYS = new Set(["i", "a", "A", "I"]);
@@ -359,7 +366,7 @@ type ModalEditorInternals = {
   tui?: { requestRender?: () => void };
   pushUndoSnapshot?: () => void;
   setCursorCol?: (col: number) => void;
-  undoStack?: { readonly length: number; pop(): unknown; stack: unknown[] };
+  undoStack?: { readonly length: number; pop(): void; stack: unknown[] };
 };
 
 type CustomEditorConstructorArgs = ConstructorParameters<typeof CustomEditor>;
@@ -4428,12 +4435,12 @@ export class ModalEditor extends CustomEditor {
 
       const renderedLineIndex = index + 1;
       if (renderedLineIndex >= lines.length) break;
-      lines[renderedLineIndex] = highlightRenderedLine(
-        lines[renderedLineIndex] ?? "",
-        layoutLine,
+      lines[renderedLineIndex] = highlightRenderedLine({
+        line: lines[renderedLineIndex] ?? "",
+        layout: layoutLine,
         selection,
-        layout.paddingX,
-      );
+        paddingX: layout.paddingX,
+      });
     }
   }
 
@@ -4562,10 +4569,9 @@ export function createPiVimEditorFactory(
 
   const t = ctx.ui.theme as Theme | null;
   const modeColors = resolveModeColors(piVimSettings.modeColors);
-  const reverseVideo = (s: string) => `\x1b[7m${s}\x1b[27m`;
   const { borderSync, labelSync } = resolveSurfaceSyncMaps(piVimSettings);
   const labelColorizers = t
-    ? buildModeColorizers(t, modeColors, reverseVideo)
+    ? buildModeColorizers(t, modeColors, applyReverseVideo)
     : null;
   const borderColorizers = t ? buildModeColorizers(t, modeColors) : null;
   const offBorderColor = t ? buildOffBorderColor(t) : null;
@@ -4583,7 +4589,7 @@ export function createPiVimEditorFactory(
       borderSync,
       labelSync,
       offBorderColor,
-      labelTransform: reverseVideo,
+      labelTransform: applyReverseVideo,
     });
     editor.setClipboardMirrorPolicy(clipboardMirrorPolicy.policy);
     editor.setQuitFn(() => ctx.shutdown());
